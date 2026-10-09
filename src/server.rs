@@ -88,6 +88,16 @@ fn handle(app: &Arc<App>, mut req: Request) {
         let _ = req.respond(json_resp(200, json!({ "app": APP_TAG, "id": settings.id, "name": settings.name, "port": app.port(), "authorized": authorized, "pid": std::process::id() })));
         return;
     }
+    if path == "/api/pair/request" && *req.method() == Method::Post {
+        let remote = req.remote_addr().map(|a| a.ip().to_string()).unwrap_or_default();
+        let body: Value = serde_json::from_str(&read_body(&mut req, 16 * 1024)).unwrap_or(Value::Null);
+        let resp = match crate::pairing::on_request(app, &body, &remote) {
+            Ok(()) => json_resp(200, json!({ "ok": true })),
+            Err(e) => json_resp(400, json!({ "error": e })),
+        };
+        let _ = req.respond(resp);
+        return;
+    }
     if !authorized {
         let _ = req.respond(json_resp(401, json!({ "error": "bad key" })));
         return;
@@ -196,6 +206,20 @@ fn route(app: &Arc<App>, req: &mut Request, method: &Method, segs: &[&str], quer
             }
         }
 
+        // ---- pairing callbacks from the other device (authenticated with our key) ----
+        (Method::Post, ["pair", what]) => {
+            let body: Value = serde_json::from_str(&read_body(req, 16 * 1024)).unwrap_or(Value::Null);
+            match *what {
+                "accept" => match crate::pairing::on_accept(app, &body) {
+                    Ok(()) => ok(),
+                    Err(e) => json_resp(400, json!({ "error": e })),
+                },
+                "decline" => { crate::pairing::on_decline(app, &body); ok() }
+                "remove" => { crate::pairing::on_remove(app, &body); ok() }
+                _ => json_resp(404, json!({ "error": "not found" })),
+            }
+        }
+
         // ---- device-only endpoints (local browser page + CLI) ----
         _ if !local => forbidden(),
 
@@ -244,6 +268,22 @@ fn route(app: &Arc<App>, req: &mut Request, method: &Method, segs: &[&str], quer
                     let text = v["text"].as_str().unwrap_or("").to_string();
                     std::thread::spawn(move || actions::cmd_send_text(&app2, &text));
                 }
+                "pair" => {
+                    let id = v["id"].as_str().unwrap_or("").to_string();
+                    return match crate::pairing::request(app, &id) {
+                        Ok(code) => json_resp(200, json!({ "ok": true, "code": code })),
+                        Err(e) => json_resp(400, json!({ "error": e })),
+                    };
+                }
+                "pair-respond" => {
+                    let id = v["id"].as_str().unwrap_or("").to_string();
+                    let accept = v["accept"].as_bool().unwrap_or(false);
+                    return match crate::pairing::respond(app, &id, accept) {
+                        Ok(()) => ok(),
+                        Err(e) => json_resp(400, json!({ "error": e })),
+                    };
+                }
+                "unpair" => crate::pairing::unpair(app, v["id"].as_str().unwrap_or("")),
                 "quit" => {
                     std::thread::spawn(|| { std::thread::sleep(Duration::from_millis(200)); std::process::exit(0); });
                 }
@@ -265,7 +305,7 @@ fn state(app: &App, local: bool) -> Value {
     let addresses: Vec<String> = crate::discovery::lan_addrs().iter().map(|(ip, _)| ip.to_string()).collect();
     let mut v = json!({
         "self": { "id": s.id, "name": s.name, "port": app.port(), "addresses": addresses },
-        "peers": app.peer_list(),
+        "peers": app.device_list(),
         "items": items,
         "isLocal": local,
     });

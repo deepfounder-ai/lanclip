@@ -52,7 +52,7 @@
     setStatus(false, 'wrong key');
     if (askForKey.askedFor === key && key) return; // don't nag on every reconnect
     askForKey.askedFor = key;
-    const k = prompt('Enter the pairing key shown in Lanclip → Settings on your computer:');
+    const k = prompt('This link is missing its access key. Scan the QR code in Lanclip → Settings on your computer, or paste the key:');
     if (k) { key = k.trim(); store.set('lanclip.key', key); connect(); }
   }
 
@@ -105,24 +105,60 @@
     $('settingsBtn').hidden = !s.isLocal;
     $('clipBtn').hidden = !s.isLocal;
 
-    const peers = $('peers');
-    peers.replaceChildren();
-    if (!s.peers.length) {
-      peers.append(el('span', { class: 'none' }, s.isLocal
-        ? 'No other devices found yet. Start Lanclip on another device on this network with the same pairing key.'
-        : `Items you send go to ${s.self.name} and every device paired with it.`));
-    }
-    for (const p of s.peers) {
-      peers.append(el('span', {
-        class: 'peer' + (p.sameKey ? '' : ' mismatch'),
-        title: p.sameKey ? `${p.host}:${p.port}` : `${p.host}:${p.port} — uses a different pairing key, not syncing`,
-      }, el('i'), p.name + (p.sameKey ? '' : ' (different key)')));
-    }
+    renderDevices();
 
     const q = filterText.toLowerCase();
     const items = s.items.filter((it) => !q || it.name.toLowerCase().includes(q) || (it.text || '').toLowerCase().includes(q) || it.origin.name.toLowerCase().includes(q));
     $('items').replaceChildren(...items.map(renderItem));
     $('empty').hidden = s.items.length > 0;
+  }
+
+  // Devices: paired ones first, then others on the network with a Connect button.
+  function renderDevices() {
+    const s = state, box = $('peers');
+    box.replaceChildren();
+    if (!s.isLocal) {
+      const n = s.peers.filter((p) => p.paired && p.online).length;
+      box.append(el('p', { class: 'none' }, `Items you send go to ${s.self.name}` + (n ? ` and ${n} connected device${n > 1 ? 's' : ''}.` : '.')));
+      return;
+    }
+    box.append(el('h2', {}, 'Devices'));
+    if (!s.peers.length) {
+      box.append(el('p', { class: 'none' }, 'Looking for other devices… Install and open Lanclip on your other computers (same Wi‑Fi/network). They will show up here.'));
+      return;
+    }
+    const call = async (path, body, done) => {
+      const res = await api(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) toast(j.error || 'Something went wrong'); else if (done) toast(done);
+    };
+    const list = el('ul', { class: 'devices' });
+    for (const p of s.peers) {
+      let status, actions = [];
+      if (p.pending === 'incoming') {
+        status = `wants to connect · code ${p.code}`;
+        actions = [
+          el('button', { class: 'small primary', type: 'button', onclick: () => call('/api/local/pair-respond', { id: p.id, accept: true }, `Connected to ${p.name}`) }, 'Accept'),
+          el('button', { class: 'small ghost', type: 'button', onclick: () => call('/api/local/pair-respond', { id: p.id, accept: false }) }, 'Decline'),
+        ];
+      } else if (p.pending === 'outgoing') {
+        status = `waiting for ${p.name} to accept · code ${p.code}`;
+      } else if (p.paired) {
+        status = p.online ? 'connected' : 'offline';
+        actions = [el('button', { class: 'small ghost', type: 'button', onclick: () => {
+          if (confirm(`Disconnect from ${p.name}? You can connect again any time.`)) call('/api/local/unpair', { id: p.id });
+        } }, 'Disconnect')];
+      } else {
+        status = 'not connected';
+        actions = [el('button', { class: 'small primary', type: 'button', onclick: () => call('/api/local/pair', { id: p.id }) }, 'Connect')];
+      }
+      const dot = p.paired ? (p.online ? 'on' : 'off') : p.pending ? 'wait' : 'new';
+      list.append(el('li', { class: 'device' },
+        el('i', { class: `dot ${dot}` }),
+        el('div', { class: 'dev-text' }, el('strong', {}, p.name), el('span', {}, status)),
+        el('div', { class: 'dev-actions' }, ...actions)));
+    }
+    box.append(list);
   }
 
   function renderItem(it) {
@@ -282,7 +318,6 @@
   $('settingsBtn').addEventListener('click', () => {
     const s = state.settings;
     form.name.value = s.name;
-    form.key.value = s.key;
     form.autoSync.checked = s.autoSync;
     form.startAtLogin.checked = s.startAtLogin;
     $('version').textContent = s.version ? `Lanclip ${s.version}` : '';
@@ -292,19 +327,15 @@
     $('qr').src = links[0] ? `/api/qr?key=${encodeURIComponent(key)}&url=${encodeURIComponent(links[0])}` : '';
     $('settings').showModal();
   });
-  $('regenKey').addEventListener('click', () => {
-    const a = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    form.key.value = Array.from(crypto.getRandomValues(new Uint8Array(10)), (b) => a[b % a.length]).join('');
-  });
+
   $('settings').addEventListener('close', async () => {
     if ($('settings').returnValue !== 'save') return;
     const body = {
-      name: form.name.value, key: form.key.value, autoSync: form.autoSync.checked, startAtLogin: form.startAtLogin.checked,
+      name: form.name.value, autoSync: form.autoSync.checked, startAtLogin: form.startAtLogin.checked,
       manualPeers: form.manualPeers.value.split(/\s+/).filter(Boolean),
     };
     const res = await api('/api/settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
     if (!res.ok) return toast('Could not save settings');
-    if (body.key !== key) { key = body.key; store.set('lanclip.key', key); connect(); }
     state = await res.json();
     render();
     toast('Saved');

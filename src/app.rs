@@ -2,7 +2,6 @@
 use crate::clip::ClipState;
 use crate::store::*;
 use crate::util::*;
-use serde::Serialize;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
@@ -14,17 +13,26 @@ use std::time::{Duration, Instant};
 pub const APP_TAG: &str = "lanclip/1";
 const MAX_INLINE_TEXT: usize = 256 * 1024;
 
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
+/// A Lanclip device seen on the network (paired or not).
+#[derive(Clone)]
 pub struct Peer {
     pub id: String,
     pub name: String,
     pub host: String,
     pub port: u16,
     pub source: &'static str,
-    pub same_key: bool,
-    #[serde(skip)]
     pub last_seen: Instant,
+}
+
+/// A pairing request this device received and hasn't answered yet.
+#[derive(Clone)]
+pub struct IncomingRequest {
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+    pub key: String,
+    pub code: String,
+    pub at: Instant,
 }
 
 pub struct App {
@@ -40,6 +48,10 @@ pub struct App {
     version_cv: Condvar,
     queues: Mutex<HashMap<String, mpsc::Sender<Item>>>,
     pub pending_send: Mutex<(Vec<PathBuf>, Option<Instant>, bool)>,
+    /// Pairing requests we sent: peer id -> (code, sent at)
+    pub outgoing: Mutex<HashMap<String, (String, Instant)>>,
+    /// Pairing requests we received: peer id -> request
+    pub incoming: Mutex<HashMap<String, IncomingRequest>>,
 }
 
 impl App {
@@ -57,6 +69,8 @@ impl App {
             version_cv: Condvar::new(),
             queues: Mutex::new(HashMap::new()),
             pending_send: Mutex::new((vec![], None, false)),
+            outgoing: Mutex::new(HashMap::new()),
+            incoming: Mutex::new(HashMap::new()),
         })
     }
 
@@ -75,14 +89,36 @@ impl App {
         *guard
     }
 
+    /// Paired devices that are currently reachable.
     pub fn active_peers(&self) -> Vec<Peer> {
-        self.peers.lock().unwrap().values().filter(|p| p.same_key).cloned().collect()
+        let paired = self.settings().paired;
+        self.peers.lock().unwrap().values().filter(|p| paired.contains_key(&p.id)).cloned().collect()
     }
 
-    pub fn peer_list(&self) -> Vec<Peer> {
-        let mut v: Vec<Peer> = self.peers.lock().unwrap().values().cloned().collect();
-        v.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-        v
+    /// Devices for the UI: everything seen on the LAN plus paired devices that are offline.
+    pub fn device_list(&self) -> Vec<serde_json::Value> {
+        let s = self.settings();
+        let peers = self.peers.lock().unwrap().clone();
+        let outgoing = self.outgoing.lock().unwrap().clone();
+        let incoming = self.incoming.lock().unwrap().clone();
+        let mut out: Vec<serde_json::Value> = peers.values().map(|p| {
+            let pending = if incoming.contains_key(&p.id) { "incoming" } else if outgoing.contains_key(&p.id) { "outgoing" } else { "" };
+            let code = incoming.get(&p.id).map(|r| r.code.clone()).or_else(|| outgoing.get(&p.id).map(|o| o.0.clone()));
+            serde_json::json!({ "id": p.id, "name": p.name, "host": p.host, "port": p.port, "source": p.source, "online": true,
+                "paired": s.paired.contains_key(&p.id), "pending": pending, "code": code })
+        }).collect();
+        for (id, req) in &incoming {
+            if !peers.contains_key(id) {
+                out.push(serde_json::json!({ "id": id, "name": req.name, "host": req.host, "port": req.port, "online": true, "paired": false, "pending": "incoming", "code": req.code }));
+            }
+        }
+        for (id, p) in &s.paired {
+            if !peers.contains_key(id) {
+                out.push(serde_json::json!({ "id": id, "name": p.name, "online": false, "paired": true, "pending": "" }));
+            }
+        }
+        out.sort_by_key(|d| (!d["paired"].as_bool().unwrap_or(false), d["name"].as_str().unwrap_or("").to_lowercase()));
+        out
     }
 
     pub fn content_path(&self, item: &Item) -> PathBuf {
@@ -199,7 +235,7 @@ impl App {
             .post(&format!("http://{}:{}/api/items", peer.host, peer.port))
             .set("content-type", "application/octet-stream")
             .set("content-length", &item.size.to_string())
-            .set("x-lanclip-key", &self.settings().key)
+            .set("x-lanclip-key", &self.settings().paired.get(&peer.id).map(|p| p.key.clone()).unwrap_or_default())
             .set("x-lanclip-meta", &pct_encode(&meta))
             .set("x-lanclip-peer", &self.settings().id)
             .send(file)
@@ -208,18 +244,13 @@ impl App {
     }
 
     pub fn update_settings(self: &Arc<Self>, patch: &serde_json::Value) {
-        let key_changed;
         {
             let mut store = self.store.lock().unwrap();
             let s = &mut store.settings;
             if let Some(n) = patch["name"].as_str().map(str::trim).filter(|n| !n.is_empty()) {
                 s.name = n.chars().take(60).collect();
             }
-            let old_key = s.key.clone();
-            if let Some(k) = patch["key"].as_str().map(str::trim).filter(|k| k.len() >= 4) {
-                s.key = k.to_string();
-            }
-            key_changed = old_key != s.key;
+
             if let Some(b) = patch["autoSync"].as_bool() {
                 s.auto_sync = b;
             }
@@ -227,9 +258,6 @@ impl App {
                 s.manual_peers = list.iter().filter_map(|v| v.as_str()).map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).take(50).collect();
             }
             store.save_settings();
-        }
-        if key_changed {
-            self.peers.lock().unwrap().clear();
         }
         crate::discovery::announce(self);
         self.changed();

@@ -66,6 +66,15 @@ pub struct Settings {
     pub manual_peers: Vec<String>,
     #[serde(default = "default_max")]
     pub max_items: usize,
+    /// Devices this one is paired with, and the key to use when talking to each of them.
+    #[serde(default)]
+    pub paired: std::collections::BTreeMap<String, PairedPeer>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PairedPeer {
+    pub name: String,
+    pub key: String,
 }
 
 pub struct Store {
@@ -91,6 +100,7 @@ impl Store {
             auto_sync: false,
             manual_peers: vec![],
             max_items: default_max(),
+            paired: Default::default(),
         });
         let mut store = Store { dir: dir.to_path_buf(), items_dir, settings, items: vec![] };
         let items = read_json::<Vec<Item>>(&dir.join("items.json")).unwrap_or_default();

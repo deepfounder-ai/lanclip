@@ -4,26 +4,26 @@ import json, os, shutil, subprocess, sys, tempfile, time, urllib.error, urllib.p
 from pathlib import Path
 
 BIN = Path(sys.argv[1] if len(sys.argv) > 1 else ("target/release/lanclip.exe" if os.name == "nt" else "target/release/lanclip")).resolve()
-KEY = "TESTKEY123"
+KEYS = {18101: "ALPHAKEY0001", 18201: "BETAKEY00002"}
 tmp = Path(tempfile.mkdtemp(prefix="lanclip-test-"))
 procs = []
 
 
 def env_for(name, port):
     e = dict(os.environ, LANCLIP_DATA=str(tmp / name), LANCLIP_PORT=str(port), LANCLIP_DISCOVERY_PORT="41999",
-             LANCLIP_NO_INTEGRATION="1", LANCLIP_NO_NOTIFY="1")
+             LANCLIP_NO_INTEGRATION="1", LANCLIP_NO_NOTIFY="1", LANCLIP_NO_PROMPT="1")
     return e
 
 
 def start(name, port, peer_port):
     d = tmp / name
     d.mkdir(parents=True)
-    (d / "settings.json").write_text(json.dumps({"id": f"{name}-0000-test", "name": name, "key": KEY, "manualPeers": [f"127.0.0.1:{peer_port}"]}))
+    (d / "settings.json").write_text(json.dumps({"id": f"{name}-0000-test", "name": name, "key": KEYS[port], "manualPeers": [f"127.0.0.1:{peer_port}"]}))
     procs.append(subprocess.Popen([str(BIN), "daemon"], env=env_for(name, port), stderr=subprocess.DEVNULL))
 
 
-def api(port, path, method="GET", body=None, headers=None, key=KEY):
-    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=body, method=method, headers={"x-lanclip-key": key, **(headers or {})})
+def api(port, path, method="GET", body=None, headers=None, key=None):
+    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=body, method=method, headers={"x-lanclip-key": key or KEYS[port], **(headers or {})})
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
             return r.status, r.read()
@@ -59,8 +59,37 @@ try:
     A, B = 18101, 18201
     start("alpha", A, B)
     start("beta", B, A)
-    wait_for(lambda: any(p["sameKey"] for p in state(A)["peers"]) and any(p["sameKey"] for p in state(B)["peers"]), "pairing")
-    ok("peers paired")
+    def dev(port, name):
+        return next((p for p in state(port)["peers"] if p["name"] == name), None)
+
+    def post_json(port, path, body):
+        return api(port, path, "POST", json.dumps(body).encode(), {"content-type": "application/json"})
+
+    wait_for(lambda: dev(A, "beta") and dev(B, "alpha"), "devices see each other")
+    assert not dev(A, "beta")["paired"]
+    ok("devices discovered, not paired yet")
+
+    # Request -> decline
+    status, body = post_json(A, "/api/local/pair", {"id": dev(A, "beta")["id"]})
+    assert status == 200, body
+    code = json.loads(body)["code"]
+    wait_for(lambda: dev(B, "alpha")["pending"] == "incoming", "incoming request")
+    assert dev(B, "alpha")["code"] == code and dev(A, "beta")["pending"] == "outgoing"
+    post_json(B, "/api/local/pair-respond", {"id": dev(B, "alpha")["id"], "accept": False})
+    wait_for(lambda: dev(A, "beta")["pending"] == "" and not dev(A, "beta")["paired"], "decline reaches alpha")
+    assert not dev(B, "alpha")["paired"]
+    ok("pair request -> decline")
+
+    # Request -> accept: keys are exchanged automatically
+    post_json(A, "/api/local/pair", {"id": dev(A, "beta")["id"]})
+    wait_for(lambda: dev(B, "alpha")["pending"] == "incoming", "incoming request 2")
+    post_json(B, "/api/local/pair-respond", {"id": dev(B, "alpha")["id"], "accept": True})
+    wait_for(lambda: dev(A, "beta")["paired"] and dev(B, "alpha")["paired"], "paired both ways")
+    ok("pair request -> accept, paired both ways")
+
+    # Unpaired outsiders can't use the API or fake an accept
+    assert api(A, "/api/state", key="WRONG")[0] == 401
+    assert api(A, "/api/pair/accept", "POST", json.dumps({"id": "x", "key": "y" * 10}).encode(), key="WRONG")[0] == 401
 
     assert api(A, "/api/state", key="WRONG")[0] == 401
     ok("wrong key rejected")
@@ -112,9 +141,13 @@ try:
     assert not (tmp / "escape").exists()
     ok("relPath traversal contained in paste folder")
 
-    api(B, "/api/settings", "PUT", json.dumps({"key": "OTHERKEY99"}).encode())
-    wait_for(lambda: any(not p["sameKey"] for p in state(A)["peers"]), "key mismatch")
-    ok("key mismatch detected")
+    post_json(A, "/api/local/unpair", {"id": dev(A, "beta")["id"]})
+    wait_for(lambda: not dev(A, "beta")["paired"] and not dev(B, "alpha")["paired"], "unpaired both ways")
+    n = len(state(B)["items"])
+    cli("alpha", A, "send-text", stdin=b"after unpair")
+    time.sleep(1.5)
+    assert len(state(B)["items"]) == n
+    ok("disconnect removes pairing on both sides; nothing is sent afterwards")
 
     print("\nall smoke tests passed")
 finally:

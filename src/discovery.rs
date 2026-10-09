@@ -46,6 +46,7 @@ pub fn start(app: Arc<App>) -> std::io::Result<()> {
         announce(&a);
         probe_manual(&a);
         expire(&a);
+        crate::pairing::expire(&a);
         std::thread::sleep(ANNOUNCE_EVERY);
     });
 
@@ -100,9 +101,14 @@ fn on_announce(app: &App, data: &[u8], from: SocketAddr) {
         host: from.ip().to_string(),
         port: m["port"].as_u64().and_then(|p| u16::try_from(p).ok()).unwrap_or(7878),
         source: "lan",
-        same_key: m["tag"].as_str() == Some(key_tag(&s.key).as_str()),
         last_seen: Instant::now(),
     };
+    // Devices set up with the same key by hand (Lanclip 0.2) count as paired.
+    if valid_id(&peer.id) && m["tag"].as_str() == Some(key_tag(&s.key).as_str()) && !s.paired.contains_key(&peer.id) {
+        let mut store = app.store.lock().unwrap();
+        store.settings.paired.insert(peer.id.clone(), crate::store::PairedPeer { name: peer.name.clone(), key: s.key.clone() });
+        store.save_settings();
+    }
     let is_new = upsert(app, peer);
     if is_new {
         announce(app); // let the newcomer learn about us right away
@@ -116,7 +122,7 @@ fn upsert(app: &App, peer: Peer) -> bool {
     drop(peers);
     let changed = match &prev {
         None => true,
-        Some(p) => p.name != peer.name || p.host != peer.host || p.same_key != peer.same_key || p.port != peer.port,
+        Some(p) => p.name != peer.name || p.host != peer.host || p.port != peer.port,
     };
     if changed {
         app.changed();
@@ -132,7 +138,7 @@ fn probe_manual(app: &App) {
             None => (addr.clone(), 7878),
         };
         let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(2)).build();
-        let Ok(resp) = agent.get(&format!("http://{host}:{port}/api/hello")).set("x-lanclip-key", &s.key).call() else { continue };
+        let Ok(resp) = agent.get(&format!("http://{host}:{port}/api/hello")).call() else { continue };
         let Ok(hello) = serde_json::from_str::<Value>(&resp.into_string().unwrap_or_default()) else { continue };
         let id = hello["id"].as_str().unwrap_or("");
         if hello["app"] != APP_TAG || id.is_empty() || id == s.id {
@@ -144,7 +150,6 @@ fn probe_manual(app: &App) {
             host: host.clone(),
             port,
             source: "manual",
-            same_key: hello["authorized"].as_bool().unwrap_or(false),
             last_seen: Instant::now(),
         });
     }

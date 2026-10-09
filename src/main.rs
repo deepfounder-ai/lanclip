@@ -15,6 +15,8 @@ mod clip;
 mod discovery;
 mod integration;
 mod notify;
+mod pairing;
+mod prompt;
 mod server;
 mod store;
 mod util;
@@ -123,6 +125,10 @@ fn call_daemon(path: &str, body: Value, timeout: Duration) -> Result<(), String>
 fn local_command(cmd: &str, body: Value) -> Result<(), String> {
     ensure_daemon()?;
     call_daemon(&format!("/api/local/{cmd}"), body, Duration::from_secs(30))
+}
+
+pub fn open_settings_page(port: u16) {
+    open_settings(port);
 }
 
 fn open_settings(port: u16) {
