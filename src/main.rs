@@ -80,12 +80,27 @@ fn key() -> String {
 
 fn agent(timeout: Duration) -> ureq::Agent { ureq::AgentBuilder::new().timeout(timeout).build() }
 
-/// The service's port if it is running and answers with our key.
-fn daemon_port() -> Option<u16> {
+/// The running service's (port, version) if it answers with our key.
+fn daemon_hello() -> Option<(u16, String)> {
     let rt = store::read_json::<Runtime>(&runtime_file())?;
     let resp = agent(Duration::from_millis(800)).get(&format!("http://127.0.0.1:{}/api/hello", rt.port)).set("x-lanclip-key", &key()).call().ok()?;
     let v: Value = serde_json::from_str(&resp.into_string().ok()?).ok()?;
-    (v["app"] == app::APP_TAG && v["authorized"] == true).then_some(rt.port)
+    (v["app"] == app::APP_TAG && v["authorized"] == true).then(|| (rt.port, v["version"].as_str().unwrap_or("").to_string()))
+}
+
+fn daemon_port() -> Option<u16> {
+    daemon_hello().map(|(port, _)| port)
+}
+
+/// Stop a running service of a different version (after an upgrade) so the new binary takes over.
+fn replace_old_daemon() {
+    if daemon_hello().is_some_and(|(_, v)| v != env!("CARGO_PKG_VERSION")) {
+        let _ = call_daemon("/api/local/quit", json!({}), Duration::from_secs(2));
+        let start = Instant::now();
+        while daemon_port().is_some() && start.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(150));
+        }
+    }
 }
 
 fn spawn_daemon(exe: &Path, open: bool) -> Result<(), String> {
@@ -141,6 +156,7 @@ fn launch() -> Result<(), String> {
     let target = integration::install_target();
     let installed_here = std::fs::canonicalize(&exe).ok() == std::fs::canonicalize(&target).ok();
     if installed_here || cfg!(target_os = "macos") {
+        replace_old_daemon();
         if let Some(port) = daemon_port() {
             open_settings(port);
             return Ok(());

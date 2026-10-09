@@ -1,6 +1,6 @@
 [package]
 name = "lanclip"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "Copy to LAN / Paste from LAN from your file manager's context menu"
 license = "MIT"

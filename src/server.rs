@@ -85,7 +85,7 @@ fn handle(app: &Arc<App>, mut req: Request) {
     }
 
     if path == "/api/hello" {
-        let _ = req.respond(json_resp(200, json!({ "app": APP_TAG, "id": settings.id, "name": settings.name, "port": app.port(), "authorized": authorized, "pid": std::process::id() })));
+        let _ = req.respond(json_resp(200, json!({ "app": APP_TAG, "id": settings.id, "name": settings.name, "port": app.port(), "authorized": authorized, "pid": std::process::id(), "version": env!("CARGO_PKG_VERSION") })));
         return;
     }
     if path == "/api/pair/request" && *req.method() == Method::Post {
