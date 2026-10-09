@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#4f46e5">
+  <title>Lanclip</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <div>
+        <h1>Lanclip</h1>
+        <p class="sub" id="selfName">Connecting…</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span class="status" id="status" title="Connection"><i></i><span>offline</span></span>
+      <button class="ghost" id="settingsBtn" hidden title="Settings">Settings</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="peers" id="peers" aria-label="Devices"></section>
+
+    <section class="composer" id="dropzone">
+      <textarea id="textInput" rows="3" placeholder="Type or paste text, or drop files and images anywhere…"></textarea>
+      <div class="composer-row">
+        <label class="btn ghost" for="fileInput">Choose files</label>
+        <input id="fileInput" type="file" multiple hidden>
+        <button class="ghost" id="clipBtn" hidden title="Send this device's current clipboard">Send clipboard</button>
+        <span class="spacer"></span>
+        <button id="sendBtn" class="primary">Send</button>
+      </div>
+      <div class="uploads" id="uploads"></div>
+    </section>
+
+    <section class="history-head">
+      <h2>History</h2>
+      <input id="filter" type="search" placeholder="Filter">
+      <button class="ghost small" id="clearBtn" title="Clear history on this device">Clear</button>
+    </section>
+    <ul class="items" id="items"></ul>
+    <p class="empty" id="empty" hidden>Nothing shared yet. Copy something on any device, or drop a file here.</p>
+  </main>
+
+  <div class="drop-overlay" id="dropOverlay"><div>Drop to share</div></div>
+
+  <dialog id="settings">
+    <form method="dialog" id="settingsForm">
+      <h2>Settings</h2>
+      <label>Device name <input name="name" required maxlength="60"></label>
+      <label>Pairing key <span class="hint">Use the same key on every device you want to connect.</span>
+        <span class="row"><input name="key" required minlength="4" autocomplete="off" spellcheck="false"><button type="button" class="ghost small" id="regenKey">New</button></span>
+      </label>
+      <label class="check"><input type="checkbox" name="autoSync"> Auto-sync clipboard (text &amp; images)</label>
+      <label>Manual peers <span class="hint">One per line, <code>ip</code> or <code>ip:port</code>. Only needed if devices don't find each other automatically.</span>
+        <textarea name="manualPeers" rows="3" spellcheck="false"></textarea>
+      </label>
+      <div class="phone">
+        <div>
+          <h3>Connect a phone</h3>
+          <p class="hint">Scan with the phone camera (same Wi‑Fi), or open:</p>
+          <div id="phoneLinks"></div>
+        </div>
+        <img id="qr" alt="QR code for phone link">
+      </div>
+      <div class="dialog-actions">
+        <button value="cancel" class="ghost" formnovalidate>Cancel</button>
+        <button value="save" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status"></div>
+  <script src="app.js"></script>
+</body>
+</html>
