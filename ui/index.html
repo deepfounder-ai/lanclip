@@ -55,7 +55,8 @@
       <label>Pairing key <span class="hint">Use the same key on every device you want to connect.</span>
         <span class="row"><input name="key" required minlength="4" autocomplete="off" spellcheck="false"><button type="button" class="ghost small" id="regenKey">New</button></span>
       </label>
-      <label class="check"><input type="checkbox" name="autoSync"> Auto-sync clipboard (text &amp; images)</label>
+      <label class="check"><input type="checkbox" name="startAtLogin"> Start Lanclip when I log in</label>
+      <label class="check"><input type="checkbox" name="autoSync"> Auto-sync clipboard (every copy is sent, received text/images go to the clipboard)</label>
       <label>Manual peers <span class="hint">One per line, <code>ip</code> or <code>ip:port</code>. Only needed if devices don't find each other automatically.</span>
         <textarea name="manualPeers" rows="3" spellcheck="false"></textarea>
       </label>
@@ -68,6 +69,10 @@
         <img id="qr" alt="QR code for phone link">
       </div>
       <div class="dialog-actions">
+        <button type="button" class="ghost small" id="quitBtn">Stop</button>
+        <button type="button" class="ghost small" id="uninstallBtn">Uninstall</button>
+        <span class="hint" id="version"></span>
+        <span class="spacer"></span>
         <button value="cancel" class="ghost" formnovalidate>Cancel</button>
         <button value="save" class="primary">Save</button>
       </div>

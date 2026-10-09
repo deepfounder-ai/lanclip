@@ -1,6 +1,7 @@
-# Builds installers for Windows, macOS and Linux. Run it from the Actions tab ("Run workflow")
-# or by pushing a tag like v0.1.0. Download the results from the run's "Artifacts" section.
-name: Build installers
+# Builds Lanclip for Windows, macOS (universal) and Linux, runs the end-to-end test on each,
+# and uploads the downloads. Run it from the Actions tab ("Run workflow") or push a tag like v0.2.0
+# (tags also publish a GitHub Release).
+name: Build
 
 on:
   workflow_dispatch:
@@ -8,29 +9,79 @@ on:
     tags: ['v*']
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+  windows:
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm test
-      - run: npx electron-builder --publish never
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - run: cargo build --release
+      - run: python test/smoke.py target/release/lanclip.exe
+      - run: |
+          mkdir out
+          copy target\release\lanclip.exe out\Lanclip-windows-x64.exe
+        shell: cmd
       - uses: actions/upload-artifact@v4
-        with:
-          name: lanclip-${{ runner.os }}
-          path: |
-            dist/*.exe
-            dist/*.dmg
-            dist/*.AppImage
-            dist/*.deb
-          if-no-files-found: error
+        with: { name: lanclip-windows, path: out/* }
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+      - run: |
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+          lipo -create -output lanclip target/aarch64-apple-darwin/release/lanclip target/x86_64-apple-darwin/release/lanclip
+      - run: python3 test/smoke.py ./lanclip
+      - name: Package Lanclip.app (ad-hoc signed) as .dmg and .zip
+        run: |
+          VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          APP=out/Lanclip.app
+          mkdir -p "$APP/Contents/MacOS"
+          cp lanclip "$APP/Contents/MacOS/lanclip"
+          cat > "$APP/Contents/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleName</key><string>Lanclip</string>
+            <key>CFBundleDisplayName</key><string>Lanclip</string>
+            <key>CFBundleIdentifier</key><string>app.lanclip</string>
+            <key>CFBundleExecutable</key><string>lanclip</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+            <key>CFBundleVersion</key><string>${VERSION}</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>LSUIElement</key><true/>
+          </dict></plist>
+          EOF
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --verbose "$APP"
+          (cd out && ditto -c -k --keepParent Lanclip.app Lanclip-macos.zip)
+          mkdir dmg && cp -R "$APP" dmg/ && ln -s /Applications dmg/Applications
+          hdiutil create -volname Lanclip -srcfolder dmg -ov -format UDZO out/Lanclip-macos.dmg
+          rm -rf "$APP"
+      - uses: actions/upload-artifact@v4
+        with: { name: lanclip-macos, path: out/* }
+
+  linux:
+    runs-on: ubuntu-22.04 # older glibc = runs on more distros
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo build --release
+      - run: python3 test/smoke.py target/release/lanclip
+      - run: |
+          mkdir out
+          cp target/release/lanclip out/lanclip-linux-x64
+          tar -czf out/lanclip-linux-x64.tar.gz -C target/release lanclip
+      - uses: actions/upload-artifact@v4
+        with: { name: lanclip-linux, path: out/* }
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, macos, linux]
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - uses: softprops/action-gh-release@v2
+        with: { files: dist/* }

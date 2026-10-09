@@ -1,7 +1,6 @@
-// Shared UI for the desktop window (with window.lanclipNative) and phone/desktop browsers.
+// Web UI served by the Lanclip service: history + settings on the computer itself, and the phone/browser client.
 (() => {
   const $ = (id) => document.getElementById(id);
-  const native = window.lanclipNative || null;
   const store = {
     get(k) { try { return localStorage.getItem(k); } catch { return null; } },
     set(k, v) { try { localStorage.setItem(k, v); } catch {} },
@@ -12,7 +11,7 @@
   let key = params.get('key') || store.get('lanclip.key') || '';
   if (params.get('key')) {
     store.set('lanclip.key', key);
-    if (!native) history.replaceState(null, '', location.pathname);
+    history.replaceState(null, '', location.pathname);
   }
 
   let state = null;
@@ -57,25 +56,24 @@
     if (k) { key = k.trim(); store.set('lanclip.key', key); connect(); }
   }
 
-  let ws, retry = 0;
-  function connect() {
-    const old = ws;
-    ws = null;
-    try { old?.close(); } catch {}
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const sock = ws = new WebSocket(`${proto}://${location.host}/ws?key=${encodeURIComponent(key)}`);
-    sock.onopen = () => { retry = 0; setStatus(true); };
-    sock.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
-      if (msg.type === 'changed') refresh().catch(() => {});
-    };
-    sock.onclose = () => {
-      if (ws !== sock) return; // replaced by a newer connection
-      ws = null;
-      setStatus(false);
-      refresh().catch(() => {}); // surfaces a wrong key
-      setTimeout(connect, Math.min(10000, 500 * 2 ** retry++));
-    };
+  // Live updates by long-polling /api/wait (works on every browser, no sockets needed).
+  let pollGen = 0;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function connect() {
+    const gen = ++pollGen;
+    let version = 0;
+    while (gen === pollGen) {
+      try {
+        const res = await api(`/api/wait?since=${version}`);
+        if (res.status === 401) { askForKey(); await sleep(3000); continue; }
+        const { version: v } = await res.json();
+        setStatus(true);
+        if (v !== version) { version = v; await refresh(); }
+      } catch {
+        setStatus(false);
+        await sleep(2000);
+      }
+    }
   }
 
   function setStatus(on, label) {
@@ -148,12 +146,12 @@
 
     const actions = el('div', { class: 'actions' });
     const btn = (label, fn, cls) => el('button', { class: 'small ' + (cls || ''), type: 'button', onclick: fn }, label);
+    const onDevice = state.isLocal;
     if (it.kind === 'text') actions.append(btn('Copy', () => copyText(it)));
-    if (it.kind === 'image' && (native || window.ClipboardItem)) actions.append(btn('Copy', () => copyImage(it)));
-    if (native) {
-      if (it.kind !== 'text') actions.append(btn('Open', () => native.open(it.id)));
-      actions.append(btn('Save as…', () => native.saveAs(it.id)));
-      if (it.kind !== 'text') actions.append(btn('Show in folder', () => native.show(it.id)));
+    if (it.kind === 'image' && (onDevice || window.ClipboardItem)) actions.append(btn('Copy', () => copyImage(it)));
+    if (onDevice) {
+      if (it.kind !== 'text') actions.append(btn('Open', () => deviceAction(it, 'open')));
+      actions.append(btn('Show in folder', () => deviceAction(it, 'reveal')));
     } else {
       actions.append(el('a', { class: 'btn ghost', href: contentUrl(it, true), download: it.name }, 'Download'));
       if (it.kind !== 'text') actions.append(el('a', { class: 'btn ghost', href: contentUrl(it), target: '_blank', rel: 'noopener' }, 'Open'));
@@ -162,7 +160,6 @@
 
     const li = el('li', { class: 'item', draggable: 'true' }, meta, body, actions);
     li.addEventListener('dragstart', (e) => {
-      if (native) { e.preventDefault(); native.startDrag(it.id); return; }
       const url = new URL(contentUrl(it, true), location.href).href;
       e.dataTransfer.setData('DownloadURL', `${it.mime}:${it.name}:${url}`);
       e.dataTransfer.setData('text/uri-list', url);
@@ -174,8 +171,11 @@
   }
 
   // ----- copy helpers -----
+  // Actions the Lanclip service performs on this computer (only offered on the device itself).
+  const deviceAction = (it, action) => api(`/api/items/${it.id}/${action}`, { method: 'POST' });
+
   async function copyText(it) {
-    if (native) { await native.copy(it.id); return toast('Copied'); }
+    if (state.isLocal) { await deviceAction(it, 'copy'); return toast('Copied'); }
     let text = it.text;
     if (it.truncated) text = await (await fetch(contentUrl(it))).text();
     try {
@@ -194,7 +194,7 @@
   }
 
   async function copyImage(it) {
-    if (native) { await native.copy(it.id); return toast('Image copied'); }
+    if (state.isLocal && it.mime === 'image/png') { await deviceAction(it, 'copy'); return toast('Image copied'); }
     try {
       const blob = await (await fetch(contentUrl(it))).blob();
       await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
@@ -247,7 +247,7 @@
   });
   $('fileInput').addEventListener('change', (e) => { sendFiles([...e.target.files]); e.target.value = ''; });
   $('clipBtn').addEventListener('click', async () => {
-    if (native) await native.sendClipboard(); else await api('/api/send-clipboard', { method: 'POST' });
+    await api('/api/local/send-clipboard', { method: 'POST' });
     toast('Clipboard sent');
   });
   $('clearBtn').addEventListener('click', () => {
@@ -284,6 +284,8 @@
     form.name.value = s.name;
     form.key.value = s.key;
     form.autoSync.checked = s.autoSync;
+    form.startAtLogin.checked = s.startAtLogin;
+    $('version').textContent = s.version ? `Lanclip ${s.version}` : '';
     form.manualPeers.value = s.manualPeers.join('\n');
     const links = state.self.addresses.map((a) => `http://${a}:${state.self.port}/?key=${encodeURIComponent(s.key)}`);
     $('phoneLinks').replaceChildren(...links.map((u) => el('a', { href: u, target: '_blank' }, u)));
@@ -297,7 +299,7 @@
   $('settings').addEventListener('close', async () => {
     if ($('settings').returnValue !== 'save') return;
     const body = {
-      name: form.name.value, key: form.key.value, autoSync: form.autoSync.checked,
+      name: form.name.value, key: form.key.value, autoSync: form.autoSync.checked, startAtLogin: form.startAtLogin.checked,
       manualPeers: form.manualPeers.value.split(/\s+/).filter(Boolean),
     };
     const res = await api('/api/settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -306,6 +308,19 @@
     state = await res.json();
     render();
     toast('Saved');
+  });
+
+  $('quitBtn').addEventListener('click', async () => {
+    if (!confirm('Stop Lanclip on this computer? Context menu entries stay; it starts again when you use one.')) return;
+    await api('/api/local/quit', { method: 'POST' });
+    $('settings').close();
+    toast('Lanclip stopped');
+  });
+  $('uninstallBtn').addEventListener('click', async () => {
+    if (!confirm('Remove Lanclip from this computer (context menu entries, start at login, the app)?')) return;
+    await api('/api/local/uninstall', { method: 'POST' });
+    $('settings').close();
+    document.body.innerHTML = '<p style="padding:40px;text-align:center">Lanclip was removed. You can close this tab.</p>';
   });
 
   if (!key) askForKey(); else connect();

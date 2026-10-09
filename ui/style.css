@@ -163,7 +163,7 @@ dialog h3 { margin: 0 0 4px; font-size: 14px; }
 #phoneLinks { display: grid; gap: 2px; font-size: 12.5px; word-break: break-all; }
 #phoneLinks a { color: var(--accent); }
 #qr { width: 132px; height: 132px; background: #fff; border-radius: 8px; padding: 4px; flex: none; }
-.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.dialog-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 .toast {
   position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%) translateY(20px);
