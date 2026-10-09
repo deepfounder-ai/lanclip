@@ -193,6 +193,14 @@ fn run_daemon(open: bool) -> Result<(), String> {
         log(format!("discovery disabled: {e}"));
     }
     actions::start_auto_sync(app.clone());
+    // Retention: drop history older than the limit even when nothing new arrives.
+    let a = app.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(600));
+        if a.store.lock().unwrap().prune() {
+            a.changed();
+        }
+    });
 
     // Menu entries point at this binary, so refresh them on every start (it may have moved/updated).
     let integrate = std::env::var_os("LANCLIP_NO_INTEGRATION").is_none();

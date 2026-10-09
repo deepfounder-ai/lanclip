@@ -313,6 +313,8 @@ fn state(app: &App, local: bool) -> Value {
         v["settings"] = json!({
             "name": s.name, "key": s.key, "autoSync": s.auto_sync, "manualPeers": s.manual_peers,
             "startAtLogin": crate::integration::autostart_enabled(),
+            "retentionDays": s.retention_days, "maxStorageGb": s.max_storage_gb,
+            "usedBytes": app.store.lock().unwrap().used_bytes(),
             "version": env!("CARGO_PKG_VERSION"),
         });
     }

@@ -54,6 +54,11 @@
       <label>Device name <input name="name" required maxlength="60"></label>
       <label class="check"><input type="checkbox" name="startAtLogin"> Start Lanclip when I log in</label>
       <label class="check"><input type="checkbox" name="autoSync"> Auto-sync clipboard (every copy is sent, received text/images go to the clipboard)</label>
+      <div class="row2">
+        <label>Keep history for (days) <input name="retentionDays" type="number" min="0.1" step="0.5" required></label>
+        <label>History size limit (GB) <input name="maxStorageGb" type="number" min="0.1" step="0.5" required></label>
+      </div>
+      <p class="hint" id="usage"></p>
       <label>Manual peers <span class="hint">One per line, <code>ip</code> or <code>ip:port</code>. Only needed if a device never shows up under Devices (some routers block discovery).</span>
         <textarea name="manualPeers" rows="3" spellcheck="false"></textarea>
       </label>

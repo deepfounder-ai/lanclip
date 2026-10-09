@@ -320,6 +320,9 @@
     form.name.value = s.name;
     form.autoSync.checked = s.autoSync;
     form.startAtLogin.checked = s.startAtLogin;
+    form.retentionDays.value = s.retentionDays;
+    form.maxStorageGb.value = s.maxStorageGb;
+    $('usage').textContent = `History currently uses ${fmtSize(s.usedBytes || 0)} on this computer. Older items are deleted automatically; files you pasted into your own folders are never touched.`;
     $('version').textContent = s.version ? `Lanclip ${s.version}` : '';
     form.manualPeers.value = s.manualPeers.join('\n');
     const links = state.self.addresses.map((a) => `http://${a}:${state.self.port}/?key=${encodeURIComponent(s.key)}`);
@@ -332,6 +335,7 @@
     if ($('settings').returnValue !== 'save') return;
     const body = {
       name: form.name.value, autoSync: form.autoSync.checked, startAtLogin: form.startAtLogin.checked,
+      retentionDays: Number(form.retentionDays.value), maxStorageGb: Number(form.maxStorageGb.value),
       manualPeers: form.manualPeers.value.split(/\s+/).filter(Boolean),
     };
     const res = await api('/api/settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });

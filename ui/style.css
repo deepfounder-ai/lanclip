@@ -191,3 +191,6 @@ dialog h3 { margin: 0 0 4px; font-size: 14px; }
   #qr { align-self: center; }
   .history-head input { max-width: none; }
 }
+
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 560px) { .row2 { grid-template-columns: 1fr; } }

@@ -254,10 +254,17 @@ impl App {
             if let Some(b) = patch["autoSync"].as_bool() {
                 s.auto_sync = b;
             }
+            if let Some(d) = patch["retentionDays"].as_f64().filter(|d| d.is_finite()) {
+                s.retention_days = d.clamp(0.04, 3650.0);
+            }
+            if let Some(g) = patch["maxStorageGb"].as_f64().filter(|g| g.is_finite()) {
+                s.max_storage_gb = g.clamp(0.1, 100_000.0);
+            }
             if let Some(list) = patch["manualPeers"].as_array() {
                 s.manual_peers = list.iter().filter_map(|v| v.as_str()).map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).take(50).collect();
             }
             store.save_settings();
+            store.prune();
         }
         crate::discovery::announce(self);
         self.changed();

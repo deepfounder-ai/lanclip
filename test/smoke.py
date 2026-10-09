@@ -141,6 +141,18 @@ try:
     assert not (tmp / "escape").exists()
     ok("relPath traversal contained in paste folder")
 
+    # Retention: default 2 days / 10 GB; items older than the limit are deleted
+    st = state(B)["settings"]
+    assert st["retentionDays"] == 2 and st["maxStorageGb"] == 10, st
+    old = {"id": "old-item-0001", "kind": "text", "ts": (time.time() - 3 * 86400) * 1000, "batch": "oldbatch01", "origin": {"id": "z", "name": "z"}}
+    api(B, "/api/items", "POST", b"stale", {"x-lanclip-meta": urllib.parse.quote(json.dumps(old)), "x-lanclip-peer": "z"})
+    assert not any(i["id"] == "old-item-0001" for i in state(B)["items"])
+    assert not (tmp / "beta" / "items" / "old-item-0001").exists()
+    api(B, "/api/settings", "PUT", json.dumps({"retentionDays": 0.5, "maxStorageGb": 3}).encode())
+    st = state(B)["settings"]
+    assert st["retentionDays"] == 0.5 and st["maxStorageGb"] == 3, st
+    ok("retention: 2 days / 10 GB defaults, old items deleted, limits adjustable")
+
     post_json(A, "/api/local/unpair", {"id": dev(A, "beta")["id"]})
     wait_for(lambda: not dev(A, "beta")["paired"] and not dev(B, "alpha")["paired"], "unpaired both ways")
     n = len(state(B)["items"])
