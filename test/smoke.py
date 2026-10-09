@@ -94,17 +94,15 @@ try:
     (dest / "notes.md").write_text("old")
     wait_for(lambda: len([i for i in state(B)["items"] if i["batch"] == state(B)["items"][0]["batch"]]) == 3, "batch on beta")
     cli("beta", B, "paste", str(dest))
-    wait_for(lambda: (dest / "notes (2).md").exists(), "paste")
-    assert (dest / "Photos (2)" / "a.jpg").read_text() == "AAA"
-    assert (dest / "Photos (2)" / "trip" / "b.txt").read_text() == "BBB"
+    wait_for(lambda: (dest / "notes (2).md").read_text() == "# hi" and (dest / "Photos (2)" / "a.jpg").read_text() == "AAA"
+             and (dest / "Photos (2)" / "trip" / "b.txt").read_text() == "BBB", "paste")
     assert (dest / "notes.md").read_text() == "old"
     ok("CLI send (2 launches -> 1 batch) -> paste on other device, structure kept, nothing overwritten")
 
     cli("alpha", A, "send-text", stdin=b"from stdin")
     wait_for(lambda: state(B)["items"][0].get("text") == "from stdin", "send-text")
     cli("beta", B, "paste", str(dest))
-    wait_for(lambda: (dest / "LAN text.txt").exists(), "text paste")
-    assert (dest / "LAN text.txt").read_text() == "from stdin"
+    wait_for(lambda: (dest / "LAN text.txt").read_text() == "from stdin", "text paste")
     ok("send-text + paste as .txt")
 
     meta = {"id": "evil-item-0001", "kind": "file", "name": "x", "relPath": "../../../escape/x", "batch": "evilbatch1", "origin": {"id": "z", "name": "z"}}

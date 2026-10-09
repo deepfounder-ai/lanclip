@@ -39,30 +39,34 @@ fn broadcast_of(ip: Ipv4Addr, mask: Ipv4Addr) -> Ipv4Addr {
     Ipv4Addr::from(u32::from(ip) | !u32::from(mask))
 }
 
+/// Starts discovery. Manual peers keep working even if the UDP port can't be bound.
 pub fn start(app: Arc<App>) -> std::io::Result<()> {
+    let a = app.clone();
+    std::thread::spawn(move || loop {
+        announce(&a);
+        probe_manual(&a);
+        expire(&a);
+        std::thread::sleep(ANNOUNCE_EVERY);
+    });
+
     let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
     sock.set_reuse_address(true)?;
+    // macOS/BSD need SO_REUSEPORT for several listeners on one broadcast port.
+    #[cfg(all(unix, not(any(target_os = "solaris", target_os = "illumos"))))]
+    sock.set_reuse_port(true)?;
     sock.set_broadcast(true)?;
     sock.bind(&SocketAddr::from(([0, 0, 0, 0], app.discovery_port)).into())?;
     let udp: UdpSocket = sock.into();
     let listener = udp.try_clone()?;
     let _ = SOCKET.set(udp);
 
-    let a = app.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 2048];
         loop {
             if let Ok((n, from)) = listener.recv_from(&mut buf) {
-                on_announce(&a, &buf[..n], from);
+                on_announce(&app, &buf[..n], from);
             }
         }
-    });
-
-    std::thread::spawn(move || loop {
-        announce(&app);
-        probe_manual(&app);
-        expire(&app);
-        std::thread::sleep(ANNOUNCE_EVERY);
     });
     Ok(())
 }
